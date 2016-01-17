@@ -334,7 +334,7 @@ class FTP:
 
     def makepasv(self):
         if self.af == socket.AF_INET:
-            host, port = parse227(self.sendcmd('PASV'))
+            host, port = parse227(self.host, self.sendcmd('PASV'))
         else:
             host, port = parse229(self.sendcmd('EPSV'), self.sock.getpeername())
         return host, port
@@ -832,11 +832,14 @@ def parse150(resp):
 
 _227_re = None
 
-def parse227(resp):
+def parse227(host, resp):
     '''Parse the '227' response for a PASV request.
     Raises error_proto if it does not contain '(h1,h2,h3,h4,p1,p2)'
-    Return ('host.addr.as.numbers', port#) tuple.'''
-
+    Return ('host.addr.as.numbers', port#) tuple.
+    Returning host address is unchanged if response address is in private network.
+    This usually means the server is behind a firewall.
+    '''
+    from ipaddress import ip_address
     if resp[:3] != '227':
         raise error_reply(resp)
     global _227_re
@@ -847,9 +850,9 @@ def parse227(resp):
     if not m:
         raise error_proto(resp)
     numbers = m.groups()
-    host = '.'.join(numbers[:4])
-    port = (int(numbers[4]) << 8) + int(numbers[5])
-    return host, port
+    port = int(numbers[4]) << 8 | int(numbers[5])
+    resp = '.'.join(numbers[:4])
+    return host if ip_address(resp).is_private and not ip_address(socket.getaddrinfo(host, 0)[-1][-1][0]).is_private else resp, port
 
 
 def parse229(resp, peer):
@@ -909,7 +912,7 @@ def ftpcp(source, sourcename, target, targetname = '', type = 'I'):
     type = 'TYPE ' + type
     source.voidcmd(type)
     target.voidcmd(type)
-    sourcehost, sourceport = parse227(source.sendcmd('PASV'))
+    sourcehost, sourceport = parse227(source.host, source.sendcmd('PASV'))
     target.sendport(sourcehost, sourceport)
     # RFC 959: the user must "listen" [...] BEFORE sending the
     # transfer request.
